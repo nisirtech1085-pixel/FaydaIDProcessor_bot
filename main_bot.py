@@ -147,25 +147,26 @@ def extract_data_from_pdf(pdf_path, user_id):
     return data
 
 def load_bold_font(size):
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     font_candidates = [
-        "Ebrima Bold.ttf",
-        "Ebrima.ttf",
-        "ebrimabd.ttf",
-        "ebrima.ttf",
-        "arialbd.ttf",
-        "DejaVuSans-Bold.ttf",
+        os.path.join(base_dir, "ebrima.ttf"),
+        os.path.join(base_dir, "washrab.ttf"),
+        os.path.join(base_dir, "arial.ttf"),
+        os.path.join(base_dir, "DejaVuSans.ttf"),
     ]
-    for font_name in font_candidates:
+    for font_path in font_candidates:
         try:
-            return ImageFont.truetype(font_name, size)
+            return ImageFont.truetype(font_path, size)
         except Exception:
             continue
     return ImageFont.load_default()
 
 
 def generate_fayda_v3(data, output_path, user_id, mode="color"):
-    template_path = "Templet2.png" if os.path.exists("Templet2.png") else "Templet2.jpg"
-    if not os.path.exists(template_path): return False
+    template_candidates = ["fayda.jpg", "Fayda.jpg", "Templet2.png", "Templet2.jpg"]
+    template_path = next((name for name in template_candidates if os.path.exists(name)), None)
+    if not template_path:
+        return False
     canvas = Image.open(template_path).convert("RGBA")
     draw = ImageDraw.Draw(canvas)
     f_amh = load_bold_font(39)
@@ -201,7 +202,7 @@ def generate_fayda_v3(data, output_path, user_id, mode="color"):
         canvas.paste(ghost, (850, 480), ghost)
 
     # Assets (QR, Barcode, Fingerprint)
-    for asset, size, pos in [(f"qr_{user_id}.png", (550, 540), (1496, 18)), (f"barcode_{user_id}.png", (300, 65), (453, 544)), (f"fin_{user_id}.png", (240, 50), (1230, 508))]:
+    for asset, size, pos in [(f"qr_{user_id}.png", (260, 260), (1520, 20)), (f"barcode_{user_id}.png", (300, 65), (453, 544)), (f"fin_{user_id}.png", (240, 50), (1230, 508))]:
         if os.path.exists(asset):
             img = Image.open(asset).resize(size).convert("RGBA")
             canvas.paste(img, pos, img)

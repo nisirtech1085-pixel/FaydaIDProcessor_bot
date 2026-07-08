@@ -103,7 +103,7 @@ def extract_data_from_pdf(pdf_path, user_id):
     page = doc[0]
 
     paths = {'photo': f"photo_{user_id}.png", 'qr': f"qr_{user_id}.png", 
-             'barcode': f"barcode_{user_id}.png", 'fin': f"fin_{user_id}.png"}
+             'fin': f"fin_{user_id}.png"}
 
     image_list = page.get_images(full=True)
     for i, img in enumerate(image_list):
@@ -116,11 +116,6 @@ def extract_data_from_pdf(pdf_path, user_id):
             output_image = remove(Image.open(io.BytesIO(img_data)), session=REMBG_SESSION)
             output_image.save(paths['photo'])
         elif i == 1: pix.save(paths['qr'])
-        elif i == 2:
-            img_pil = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            w, h = img_pil.size
-            barcode_box = (int(w*(590/w)), int(h*(2695/h)), int(w*(1300/w)), int(h*(2900/h)))
-            img_pil.crop(barcode_box).save(paths['barcode'])
 
     page.get_pixmap(clip=fitz.Rect(496.5, 493, 540, 501), matrix=fitz.Matrix(4, 4)).save(paths['fin'])
     
@@ -149,6 +144,7 @@ def extract_data_from_pdf(pdf_path, user_id):
 def load_bold_font(size):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     font_candidates = [
+        os.path.join(base_dir, "ebrima-bold.ttf"),
         os.path.join(base_dir, "ebrima.ttf"),
         os.path.join(base_dir, "washrab.ttf"),
         os.path.join(base_dir, "arial.ttf"),
@@ -163,15 +159,15 @@ def load_bold_font(size):
 
 
 def generate_fayda_v3(data, output_path, user_id, mode="color"):
-    template_candidates = ["fayda.jpg", "Fayda.jpg", "Templet2.png", "Templet2.jpg"]
+    template_candidates = ["fayda.jpg", "Fayda.jpg", "faydatemplate1.jpg", "faydatemplate1.png", "Templet2.png", "Templet2.jpg"]
     template_path = next((name for name in template_candidates if os.path.exists(name)), None)
     if not template_path:
         return False
     canvas = Image.open(template_path).convert("RGBA")
     draw = ImageDraw.Draw(canvas)
-    f_amh = load_bold_font(39)
-    f_bold = load_bold_font(32)
-    f_small = load_bold_font(23)
+    f_amh = load_bold_font(26)
+    f_bold = load_bold_font(26)
+    f_small = load_bold_font(16)
 
     # Dynamic Rotated Dates
     now = datetime.now()
@@ -201,24 +197,24 @@ def generate_fayda_v3(data, output_path, user_id, mode="color"):
         ghost = raw_photo.resize((110, 130))
         canvas.paste(ghost, (850, 480), ghost)
 
-    # Assets (QR, Barcode, Fingerprint)
-    for asset, size, pos in [(f"qr_{user_id}.png", (260, 260), (1520, 20)), (f"barcode_{user_id}.png", (300, 65), (453, 544)), (f"fin_{user_id}.png", (240, 50), (1230, 508))]:
+    # Assets (QR, Fingerprint)
+    for asset, size, pos in [(f"qr_{user_id}.png", (260, 260), (1520, 20)), (f"fin_{user_id}.png", (240, 50), (1230, 508))]:
         if os.path.exists(asset):
             img = Image.open(asset).resize(size).convert("RGBA")
             canvas.paste(img, pos, img)
 
     # Main Text Overlay
     text_x = 402
-    draw.text((text_x, 180), data['name_amh'], font=f_amh, fill="black")
-    draw.text((text_x, 222), data['name_eng'], font=f_bold, fill="black")
-    draw.text((text_x, 310), data['dob'], font=f_bold, fill="black")
-    draw.text((text_x, 375), data['sex'], font=f_amh, fill="black")
-    draw.text((text_x, 447), data['expiry'], font=f_bold, fill="black")
-    draw.text((460, 512), data['fan'], font=f_bold, fill="black")
-    draw.text((canvas.width - 180, canvas.height - 55), data['sn'], font=f_bold, fill="black")
+    draw.text((text_x, 177), data['name_amh'], font=f_amh, fill="black")
+    draw.text((text_x, 219), data['name_eng'], font=f_bold, fill="black")
+    draw.text((text_x, 304), data['dob'], font=f_bold, fill="black")
+    draw.text((text_x, 370), data['sex'], font=f_amh, fill="black")
+    draw.text((text_x, 440), data['expiry'], font=f_bold, fill="black")
+    draw.text((460, 490), data['fan'], font=f_bold, fill="black")
+    draw.text((canvas.width - 180, canvas.height - 56), data['sn'], font=f_bold, fill="black")
 
-    back_x, y_addr = (canvas.width // 2) + 46, 235
-    draw.text((back_x, 70), data['phone'], font=f_bold, fill="black")
+    back_x, y_addr = (canvas.width // 2) + 26, 234
+    draw.text((back_x, 71), data['phone'], font=f_bold, fill="black")
     for line in data['address']:
         draw.text((back_x, y_addr), line, font=f_amh, fill="black")
         y_addr += 40
@@ -261,7 +257,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 "2. Faayila PDF buufame as gara bot kanaatti ergi.\n\n"
         f"💰 **Your Balance:** {credits} packages"
     )
-    await update.message.reply_text(welcome, reply_markup=main_menu_keyboard(), parse_mode="Markdown")
+    await update.message.reply_text(welcome, parse_mode="Markdown")
     return MENU
 
 async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -356,7 +352,7 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await msg.edit_text("❌ Extraction failed.")
     finally:
-        for f in [pdf_path, f"C_{user_id}.png", f"B_{user_id}.png", f"photo_{user_id}.png", f"qr_{user_id}.png", f"barcode_{user_id}.png", f"fin_{user_id}.png"]:
+        for f in [pdf_path, f"C_{user_id}.png", f"B_{user_id}.png", f"photo_{user_id}.png", f"qr_{user_id}.png", f"fin_{user_id}.png"]:
             if os.path.exists(f): os.remove(f)
 
 
@@ -371,10 +367,9 @@ app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 # Define Handlers
 conv = ConversationHandler(
-    entry_points=[CommandHandler('start', start)],
+    entry_points=[CommandHandler('start', start), MessageHandler(filters.Document.PDF, handle_pdf)],
     states={
         MENU: [
-            CallbackQueryHandler(button_tap, pattern="^(buy_package|print_id|contact_help)$"),
             MessageHandler(filters.Document.PDF, handle_pdf)
         ],
         BUY_PACK: [CallbackQueryHandler(select_package, pattern="^(pkg_1|pkg_20|pkg_100|pkg_150)$")],

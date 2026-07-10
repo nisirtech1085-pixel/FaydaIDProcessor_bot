@@ -8,14 +8,17 @@ import asyncio
 from datetime import datetime
 from rembg import remove, new_session
 from PIL import Image, ImageDraw, ImageFont
+import numpy as np
 from ethiopian_date import EthiopianDateConverter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 
 # CONFIGURATION 
-ADMIN_ID = 1032772516  
-TELEBIRR_NUMBER = "0923804952"
-BOT_TOKEN = "8212668446:AAGAs1oZI0cqiJQ-tC6MKLbDuQaBXLL3Czc"
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+TELEBIRR_NUMBER = os.environ.get("TELEBIRR_NUMBER", "")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN environment variable is required")
 # ADD THIS LINE:
 REMBG_SESSION = new_session()
 
@@ -158,6 +161,31 @@ def load_bold_font(size):
     return ImageFont.load_default()
 
 
+def bilateral_alpha_blur(alpha, diameter=15, sigma_color=75, sigma_space=75):
+    alpha_arr = np.array(alpha, dtype=np.uint8)
+    if alpha_arr.ndim != 2:
+        raise ValueError("Alpha layer must be a single channel image")
+
+    radius = diameter // 2
+    padded = np.pad(alpha_arr, radius, mode='reflect')
+    filtered = np.zeros_like(alpha_arr, dtype=np.float32)
+
+    coords = np.arange(-radius, radius + 1)
+    xx, yy = np.meshgrid(coords, coords)
+    spatial = np.exp(-(xx**2 + yy**2) / (2.0 * (sigma_space**2)))
+
+    for y in range(alpha_arr.shape[0]):
+        for x in range(alpha_arr.shape[1]):
+            region = padded[y:y + diameter, x:x + diameter]
+            intensity_diff = region.astype(np.int32) - int(alpha_arr[y, x])
+            range_weight = np.exp(-(intensity_diff**2) / (2.0 * (sigma_color**2)))
+            weights = spatial * range_weight
+            filtered[y, x] = np.sum(weights * region) / np.sum(weights)
+
+    filtered = np.clip(filtered, 0, 255).astype(np.uint8)
+    return Image.fromarray(filtered, mode='L')
+
+
 def generate_fayda_v3(data, output_path, user_id, mode="color", template_path=None, qr_size=None):
     template_candidates = ["fayda.jpg", "Fayda.jpg", "faydatemplate1.jpg", "faydatemplate1.png", "Templet2.png", "Templet2.jpg"]
     if template_path and os.path.exists(template_path):
@@ -196,8 +224,18 @@ def generate_fayda_v3(data, output_path, user_id, mode="color", template_path=No
             r, g, b, alpha = raw_photo.split()
             gray = raw_photo.convert("L")
             raw_photo = Image.merge("RGBA", (gray, gray, gray, alpha))
-        canvas.paste(raw_photo.resize((330, 370)), (62, 180), raw_photo.resize((330, 370)))
+
+        # Apply bilateral smoothing to the alpha mask to preserve sharpness while smoothing edges.
+        photo_resized = raw_photo.resize((330, 370))
+        r, g, b, alpha = photo_resized.split()
+        alpha = bilateral_alpha_blur(alpha, diameter=15, sigma_color=50, sigma_space=50)
+        photo_resized = Image.merge("RGBA", (r, g, b, alpha))
+        canvas.paste(photo_resized, (62, 180), photo_resized)
+
         ghost = raw_photo.resize((110, 130))
+        r_g, g_g, b_g, alpha_g = ghost.split()
+        alpha_g = bilateral_alpha_blur(alpha_g, diameter=11, sigma_color=40, sigma_space=40)
+        ghost = Image.merge("RGBA", (r_g, g_g, b_g, alpha_g))
         canvas.paste(ghost, (850, 480), ghost)
 
     # Assets (QR, Fingerprint)
@@ -227,6 +265,9 @@ def generate_fayda_v3(data, output_path, user_id, mode="color", template_path=No
         draw.text((back_x, y_addr), line, font=f_amh, fill="black")
         y_addr += 40
 
+    # Flip the final composed output for all generated images
+    canvas = canvas.transpose(Image.FLIP_LEFT_RIGHT)
+
     # Save as PDF if filename extension requests it, otherwise default to PNG
     # Save output as PNG
     rgb = canvas.convert("RGB")
@@ -251,13 +292,13 @@ def package_keyboard():
 async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     current_tpl = context.user_data.get('template_choice', 'default')
-    current_qr = context.user_data.get('qr_size', 260)
+    current_mode = context.user_data.get('output_mode', 'color')
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("Template Choice", callback_data='set_template')],
-        [InlineKeyboardButton("QR Size", callback_data='set_qr')],
+        [InlineKeyboardButton("Output Mode", callback_data='set_mode')],
         [InlineKeyboardButton("Back", callback_data='back_main')]
     ])
-    await update.message.reply_text(f"Settings\nTemplate: {current_tpl}\nQR size: {current_qr}", reply_markup=kb)
+    await update.message.reply_text(f"Settings\nTemplate: {current_tpl}\nOutput Mode: {current_mode}", reply_markup=kb)
     return SETTINGS
 
 
@@ -279,47 +320,25 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['template_choice'] = chosen
         await query.edit_message_text(f"Template set to {chosen}")
         return
-    # QR size options
-    if data == 'set_qr':
+    # Output mode options
+    if data == 'set_mode':
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Small (150)", callback_data='qr:150')],
-            [InlineKeyboardButton("Medium (260)", callback_data='qr:260')],
-            [InlineKeyboardButton("Large (350)", callback_data='qr:350')],
-            [InlineKeyboardButton("Custom", callback_data='qr:custom')],
+            [InlineKeyboardButton("Color", callback_data='mode:color')],
+            [InlineKeyboardButton("B/W", callback_data='mode:bw')],
             [InlineKeyboardButton("Back", callback_data='back_main')]
         ])
-        await query.edit_message_text("Choose QR size:", reply_markup=kb)
+        await query.edit_message_text("Choose output mode:", reply_markup=kb)
         return
-    if data.startswith('qr:'):
+    if data.startswith('mode:'):
         val = data.split(':', 1)[1]
-        if val == 'custom':
-            context.user_data['qr_custom_pending'] = True
-            await query.edit_message_text("Send me the QR size in pixels (e.g. 300)")
-            return
-        try:
-            size = int(val)
-            context.user_data['qr_size'] = size
-            await query.edit_message_text(f"QR size set to {size}")
-        except Exception:
-            await query.edit_message_text("Invalid size")
+        if val in ['color', 'bw']:
+            context.user_data['output_mode'] = val
+            await query.edit_message_text(f"Output mode set to {val}")
+        else:
+            await query.edit_message_text("Invalid mode")
         return
     if data == 'back_main':
         await query.edit_message_text("Back to main menu.", reply_markup=main_menu_keyboard())
-        return
-
-
-async def qr_custom_size_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Accept a numeric text message when waiting for custom QR size
-    if context.user_data.get('qr_custom_pending'):
-        text = update.message.text.strip()
-        if text.isdigit():
-            size = int(text)
-            context.user_data['qr_size'] = size
-            context.user_data.pop('qr_custom_pending', None)
-            await update.message.reply_text(f"QR size set to {size}")
-        else:
-            await update.message.reply_text("Please send a numeric pixel size (e.g. 300)")
-    else:
         return
 
 
@@ -424,25 +443,22 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = await asyncio.to_thread(extract_data_from_pdf, pdf_path, user_id)
         
         if data:
-            c_out, b_out = f"C_{user_id}.png", f"B_{user_id}.png"
-            
-            # Respect user's settings (template choice and qr size)
+            # Respect user's settings (template choice and output mode)
             user_template = context.user_data.get('template_choice')
-            user_qr_size = context.user_data.get('qr_size')
+            user_mode = context.user_data.get('output_mode', 'color')
+            out_path = f"{user_mode}_{user_id}.png"
 
-            # Run generation in background threads with settings
-            await asyncio.to_thread(generate_fayda_v3, data, c_out, user_id, "color", template_path=user_template, qr_size=user_qr_size)
-            await asyncio.to_thread(generate_fayda_v3, data, b_out, user_id, "bw", template_path=user_template, qr_size=user_qr_size)
-            
-            with open(c_out, 'rb') as f: await update.message.reply_document(f, filename="Fayda_Color.png")
-            with open(b_out, 'rb') as f: await update.message.reply_document(f, filename="Fayda_BW.png")
+            await asyncio.to_thread(generate_fayda_v3, data, out_path, user_id, user_mode, template_path=user_template)
+            with open(out_path, 'rb') as f:
+                filename = "Fayda_Color.png" if user_mode == 'color' else "Fayda_BW.png"
+                await update.message.reply_document(f, filename=filename)
             
             add_credits(user_id, -1)
             await msg.edit_text(f"✅ Success! 1 package deducted. Balance: {get_credits(user_id)}")
         else:
             await msg.edit_text("❌ Extraction failed.")
     finally:
-        for f in [pdf_path, f"C_{user_id}.png", f"B_{user_id}.png", f"photo_{user_id}.png", f"qr_{user_id}.png", f"fin_{user_id}.png"]:
+        for f in [pdf_path, f"{context.user_data.get('output_mode', 'color')}_{user_id}.png", f"photo_{user_id}.png", f"qr_{user_id}.png", f"fin_{user_id}.png"]:
             if os.path.exists(f): os.remove(f)
 
 
@@ -471,8 +487,7 @@ conv = ConversationHandler(
 app.add_handler(conv)
 app.add_handler(CallbackQueryHandler(admin_approval, pattern="^(appr|rej)_"))
 app.add_handler(CommandHandler('settings', settings_cmd))
-app.add_handler(CallbackQueryHandler(settings_callback, pattern="^(set_template|set_qr|back_main|tpl:.*|qr:.*)$"))
-app.add_handler(MessageHandler(filters.Regex(r'^\d+$') & ~filters.COMMAND, qr_custom_size_handler))
+app.add_handler(CallbackQueryHandler(settings_callback, pattern="^(set_template|set_mode|back_main|tpl:.*|mode:.*)$"))
 
 # 2. Add a helper to start the bot's background processes
 async def setup_webhook():
